@@ -1,0 +1,49 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <application>
+    <service
+        android:name="expo.modules.autoledger.AutoLedgerNotificationListener"
+        android:label="轻记账通知自动记账"
+        android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+    </service>
+
+    <service
+        android:name="expo.modules.autoledger.AutoLedgerAccessibilityService"
+        android:label="轻记账无障碍自动记账"
+        android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+          android:name="android.accessibilityservice"
+          android:resource="@xml/auto_ledger_accessibility_config" />
+    </service>
+
+    <receiver
+        android:name="expo.modules.autoledger.CaptureActionReceiver"
+        android:exported="false">
+      <intent-filter>
+        <action android:name="com.ledgerapp.autoledger.ACTION_CONFIRM_CAPTURE" />
+        <action android:name="com.ledgerapp.autoledger.ACTION_IGNORE_CAPTURE" />
+      </intent-filter>
+    </receiver>
+
+    <receiver
+        android:name="expo.modules.autoledger.LedgerSummaryWidgetProvider"
+        android:label="轻记账 · 月度概览"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+      </intent-filter>
+      <meta-data
+          android:name="android.appwidget.provider"
+          android:resource="@xml/ledger_widget_info" />
+    </receiver>
+  </application>
+</manifest>

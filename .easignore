@@ -1,0 +1,14 @@
+node_modules/
+.expo/
+dist/
+.test-dist/
+web-build/
+/android
+/ios
+!modules/
+!modules/**
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+*.tsbuildinfo

@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".test-dist",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0",
+    "customConditions": null,
+    "types": ["node"],
+    "target": "es2022",
+    "rootDir": "."
+  },
+  "exclude": [],
+  "include": [
+    "src/types/**/*.ts",
+    "src/constants/**/*.ts",
+    "src/utils/**/*.ts",
+    "src/db/demoSeed.ts",
+    "tests/**/*.ts"
+  ]
+}
