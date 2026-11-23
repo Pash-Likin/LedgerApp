@@ -23,15 +23,28 @@
 - **自定义分类与数据管理（分类页）**
   - 内置 10 个常用支出分类和 6 个常用收入分类，支持自由新增、编辑名称/图标/颜色或删除分类（删除时历史记录自动迁移至保底分类，不会丢失账目）。
 
-## 如何在安卓手机上打包安装（EAS Build）
+## 如何在安卓手机上打包安装
 
 > **提示**：由于「通知监听服务」「无障碍服务」和「桌面小组件」包含安卓原生 Kotlin 代码（位于 `modules/auto-ledger`），**必须打包独立 APK 安装包才能体验完整功能**（通用的 Expo Go 不包含自定义原生模块）。
 
-在 `d:\Code\Gemini\LedgerApp` 目录打开 PowerShell 运行（因本地未安装 Git，需设置 `EAS_NO_VCS=1`）：
+### 方式一：直接在 GitHub Releases 页面下载 APK（推荐，全自动构建）
+
+项目已配置好 GitHub Actions 工作流（`.github/workflows/android-release.yml`），会自动在云端完成类型检查、单元测试、Android 原生编译并发布 `.apk` 到 **Releases** 页面：
+
+- **方法 A（推送版本标签自动发布）**：
+  ```powershell
+  git tag v1.0.0
+  git push origin v1.0.0
+  ```
+- **方法 B（GitHub 网页端手动触发）**：
+  打开仓库 **Actions → Android APK Release → Run workflow**，填写版本号（如 `v1.0.0`）点击运行。
+
+约 8～12 分钟构建完成后，直接进入仓库右侧 **Releases** 页面即可下载 `QingJiZhang-v1.0.0.apk` 安装到安卓手机。
+
+### 方式二：使用 Expo EAS 云端构建 APK
 
 ```powershell
 cd d:\Code\Gemini\LedgerApp
-$env:EAS_NO_VCS="1"
 npx eas-cli login
 npx eas-cli build -p android --profile preview
 ```
