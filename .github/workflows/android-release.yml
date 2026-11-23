@@ -68,7 +68,20 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "Using Android SDK at: $SDK_DIR"
+          test -d "$SDK_DIR"
+          echo "ANDROID_HOME=$SDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_DIR" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_DIR/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER=$(command -v sdkmanager || true)
+          fi
+          if [ -n "$SDKMANAGER" ]; then
+            set +o pipefail
+            yes | "$SDKMANAGER" --licenses >/dev/null || true
+          fi
 
       - name: Setup Gradle cache
         uses: gradle/actions/setup-gradle@v4
@@ -108,18 +121,31 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.meta.outputs.tag_name }}
-          name: ${{ steps.meta.outputs.release_title }}
-          generate_release_notes: true
-          files: release/QingJiZhang-${{ steps.meta.outputs.safe_tag }}.apk
-          body: |
-            ### 安装与使用说明
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.meta.outputs.tag_name }}
+          SAFE_TAG: ${{ steps.meta.outputs.safe_tag }}
+          RELEASE_TITLE: ${{ steps.meta.outputs.release_title }}
+        run: |
+          APK_FILE="release/QingJiZhang-${SAFE_TAG}.apk"
+          test -s "$APK_FILE"
+          cat << 'EOF' > release/RELEASE_NOTES.md
+          ### 安装与使用说明
 
-            1. 点击下方 Assets 中的 **`.apk`** 文件下载到安卓手机并安装（首次安装自建应用需在系统弹窗中允许「未知来源应用」）。
-            2. 如需启用**微信 / 支付宝 / 美团实时自动记账**：
-               - 打开「轻记账」→ 点击首页右上角铃铛图标（或「分类 → 自动记账与桌面小组件」）；
-               - 依次开启「弹出确认通知权限」、「通知栏使用权」以及可选的「无障碍服务」；
-               - 可点击页面内的「模拟美团外卖 ¥36.50」立即测试通知栏弹窗确认效果。
-            3. 如需使用**手机桌面小组件**：点击同一页面底部的「一键添加到手机桌面」，或在手机桌面长按空白处添加「轻记账 · 月度概览」。
+          1. 点击下方 Assets 中的 **`.apk`** 文件下载到安卓手机并安装（首次安装自建应用需在系统弹窗中允许「未知来源应用」）。
+          2. 如需启用**微信 / 支付宝 / 美团实时自动记账**：
+             - 打开「轻记账」→ 点击首页右上角铃铛图标（或「分类 → 自动记账与桌面小组件」）；
+             - 依次开启「弹出确认通知权限」、「通知栏使用权」以及可选的「无障碍服务」；
+             - 可点击页面内的「模拟美团外卖 ¥36.50」立即测试通知栏弹窗确认效果。
+          3. 如需使用**手机桌面小组件**：点击同一页面底部的「一键添加到手机桌面」，或在手机桌面长按空白处添加「轻记账 · 月度概览」。
+          EOF
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "$APK_FILE" --clobber
+            gh release edit "$TAG_NAME" --title "$RELEASE_TITLE" --notes-file release/RELEASE_NOTES.md
+          else
+            gh release create "$TAG_NAME" "$APK_FILE" \
+              --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release/RELEASE_NOTES.md
+          fi
