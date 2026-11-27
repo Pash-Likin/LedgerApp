@@ -10,11 +10,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, RADIUS, SHADOW, SPACING, TABULAR_NUMS } from '../constants/theme';
 import { useLedger } from '../context/LedgerContext';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { showAlert, showConfirm } from '../services/dialog';
 import {
   triggerLightHaptic,
@@ -53,6 +55,8 @@ export function TransactionModal({
   onClose,
 }: TransactionModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const { keyboardHeight, isKeyboardVisible } = useKeyboardHeight(visible);
   const {
     categories,
     selectedMonth,
@@ -71,7 +75,6 @@ export function TransactionModal({
   const [saving, setSaving] = useState(false);
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [catEditorVisible, setCatEditorVisible] = useState(false);
-  const [systemKeyboardOpen, setSystemKeyboardOpen] = useState(false);
 
   const filteredCategories = useMemo(
     () => categories.filter((c) => c.type === type),
@@ -79,27 +82,9 @@ export function TransactionModal({
   );
 
   useEffect(() => {
-    const showEvent =
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent =
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subShow = Keyboard.addListener(showEvent, () =>
-      setSystemKeyboardOpen(true)
-    );
-    const subHide = Keyboard.addListener(hideEvent, () =>
-      setSystemKeyboardOpen(false)
-    );
-    return () => {
-      subShow.remove();
-      subHide.remove();
-    };
-  }, []);
-
-  useEffect(() => {
     if (!visible) return;
     setErrorHint(null);
     setSaving(false);
-    setSystemKeyboardOpen(false);
 
     if (editingTransaction) {
       setType(editingTransaction.type);
@@ -276,6 +261,11 @@ export function TransactionModal({
     dateKey !== yesterdayKey &&
     dateKey !== dayBeforeKey;
 
+  const sheetMaxHeight = Math.max(
+    280,
+    windowHeight - keyboardHeight - insets.top - 16
+  );
+
   return (
     <Modal
       visible={visible}
@@ -283,12 +273,26 @@ export function TransactionModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
-        <Pressable style={styles.backdropDismiss} onPress={onClose} />
+      <View style={[styles.backdrop, { paddingBottom: keyboardHeight }]}>
+        <Pressable
+          style={styles.backdropDismiss}
+          onPress={() => {
+            if (isKeyboardVisible) {
+              Keyboard.dismiss();
+            } else {
+              onClose();
+            }
+          }}
+        />
         <View
           style={[
             styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, SPACING.md) },
+            {
+              maxHeight: sheetMaxHeight,
+              paddingBottom: isKeyboardVisible
+                ? SPACING.sm
+                : Math.max(insets.bottom, SPACING.md),
+            },
           ]}
         >
           {/* Header with type toggle */}
@@ -373,7 +377,7 @@ export function TransactionModal({
 
           {/* Categories 4-column Grid */}
           <ScrollView
-            style={styles.catScroll}
+            style={[styles.catScroll, isKeyboardVisible && styles.catScrollCompact]}
             contentContainerStyle={styles.catGrid}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -523,7 +527,7 @@ export function TransactionModal({
           </View>
 
           {/* Built-in Calculator Keypad (hidden while system keyboard is up for note typing) */}
-          {systemKeyboardOpen ? (
+          {isKeyboardVisible ? (
             <TouchableOpacity
               onPress={() => Keyboard.dismiss()}
               style={styles.keyboardDoneBar}
@@ -707,6 +711,9 @@ const styles = StyleSheet.create({
   catScroll: {
     maxHeight: 196,
     paddingHorizontal: SPACING.md,
+  },
+  catScrollCompact: {
+    maxHeight: 96,
   },
   catGrid: {
     flexDirection: 'row',

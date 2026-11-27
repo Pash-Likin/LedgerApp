@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   View,
@@ -10,8 +11,15 @@ import {
 import { CategoryEditorModal } from '../components/CategoryEditorModal';
 import { COLORS, RADIUS, SHADOW, SPACING } from '../constants/theme';
 import { useLedger } from '../context/LedgerContext';
+import { autoLedger, type AutoLedgerSettings } from '../services/autoLedger';
 import { showAlert, showConfirm } from '../services/dialog';
-import { triggerSelectionHaptic, triggerSuccessHaptic } from '../services/haptics';
+import {
+  isHapticsEnabled,
+  setHapticsEnabled,
+  subscribeHapticsChanged,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic,
+} from '../services/haptics';
 import type { Category, TransactionType } from '../types/ledger';
 import { formatYearMonthLabel } from '../utils/date';
 
@@ -35,6 +43,51 @@ export function CategoriesScreen({ onOpenAutoCenter }: CategoriesScreenProps) {
   const [editorVisible, setEditorVisible] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [busyAction, setBusyAction] = useState(false);
+  const [hapticsOn, setHapticsOn] = useState<boolean>(() => isHapticsEnabled());
+  const [captureSettings, setCaptureSettings] = useState<AutoLedgerSettings>(
+    () => autoLedger.getSettings()
+  );
+
+  const autoCaptureOn =
+    captureSettings.notificationEnabled || captureSettings.accessibilityEnabled;
+
+  useEffect(() => {
+    const unsubHaptics = subscribeHapticsChanged((enabled) =>
+      setHapticsOn(enabled)
+    );
+    const unsubSettings = autoLedger.subscribeSettingsChanged((next) =>
+      setCaptureSettings(next)
+    );
+    return () => {
+      unsubHaptics();
+      unsubSettings();
+    };
+  }, []);
+
+  const handleToggleHaptics = (value: boolean) => {
+    setHapticsEnabled(value);
+    setHapticsOn(value);
+    if (value) {
+      triggerSelectionHaptic();
+    }
+  };
+
+  const handleToggleAutoCapture = (value: boolean) => {
+    triggerSelectionHaptic();
+    const next: AutoLedgerSettings = value
+      ? {
+          ...captureSettings,
+          notificationEnabled: true,
+          accessibilityEnabled: captureSettings.accessibilityEnabled,
+        }
+      : {
+          ...captureSettings,
+          notificationEnabled: false,
+          accessibilityEnabled: false,
+        };
+    setCaptureSettings(next);
+    autoLedger.updateSettings(next);
+  };
 
   const visibleCategories = useMemo(
     () => categories.filter((c) => c.type === activeType),
@@ -146,7 +199,7 @@ export function CategoriesScreen({ onOpenAutoCenter }: CategoriesScreenProps) {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Auto-Ledger & Desktop Widget Entry Card */}
+        {/* Desktop Widget & Optional Auto-Ledger Entry Card */}
         <TouchableOpacity
           onPress={onOpenAutoCenter}
           activeOpacity={0.8}
@@ -154,15 +207,11 @@ export function CategoriesScreen({ onOpenAutoCenter }: CategoriesScreenProps) {
         >
           <View style={styles.autoCardLeft}>
             <View style={styles.autoIconWrap}>
-              <Ionicons
-                name="notifications-outline"
-                size={21}
-                color={COLORS.white}
-              />
+              <Ionicons name="apps-outline" size={21} color={COLORS.white} />
             </View>
             <View style={styles.autoTextWrap}>
               <View style={styles.autoTitleRow}>
-                <Text style={styles.autoTitle}>自动记账与桌面小组件</Text>
+                <Text style={styles.autoTitle}>桌面小组件与扩展功能</Text>
                 {pendingCaptures.length > 0 ? (
                   <View style={styles.autoPendingBadge}>
                     <Text style={styles.autoPendingText}>
@@ -172,7 +221,8 @@ export function CategoriesScreen({ onOpenAutoCenter }: CategoriesScreenProps) {
                 ) : null}
               </View>
               <Text style={styles.autoSub}>
-                微信/支付宝/美团支付通知识别、一键添加桌面小组件
+                添加桌面小组件 · 付款通知自动记账（
+                {autoCaptureOn ? '已开启' : '未开启，可选'}）
               </Text>
             </View>
           </View>
@@ -309,6 +359,41 @@ export function CategoriesScreen({ onOpenAutoCenter }: CategoriesScreenProps) {
               </View>
             );
           })}
+        </View>
+
+        {/* Preferences Card */}
+        <View style={styles.card}>
+          <Text style={styles.dataTitle}>偏好设置</Text>
+          <View style={[styles.prefRow, styles.prefRowBorder]}>
+            <View style={styles.prefTextCol}>
+              <Text style={styles.prefLabel}>记账与按键震动反馈</Text>
+              <Text style={styles.prefSub}>
+                关闭后点击键盘、保存记账及提醒通知均不再震动
+              </Text>
+            </View>
+            <Switch
+              value={hapticsOn}
+              onValueChange={handleToggleHaptics}
+              trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
+              thumbColor={hapticsOn ? COLORS.primary : COLORS.textMuted}
+            />
+          </View>
+          <View style={styles.prefRow}>
+            <View style={styles.prefTextCol}>
+              <Text style={styles.prefLabel}>付款通知自动记账（可选）</Text>
+              <Text style={styles.prefSub}>
+                {autoCaptureOn
+                  ? '已开启，可点上方「桌面小组件与扩展功能」配置权限或查看日志'
+                  : '默认关闭，无需强制开启，关闭时仅使用手动记账'}
+              </Text>
+            </View>
+            <Switch
+              value={autoCaptureOn}
+              onValueChange={handleToggleAutoCapture}
+              trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
+              thumbColor={autoCaptureOn ? COLORS.primary : COLORS.textMuted}
+            />
+          </View>
         </View>
 
         {/* Data Management Card */}
@@ -518,6 +603,31 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textPrimary,
     marginBottom: 4,
+  },
+  prefRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    gap: SPACING.sm,
+  },
+  prefRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.divider,
+  },
+  prefTextCol: {
+    flex: 1,
+  },
+  prefLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  prefSub: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    lineHeight: 17,
   },
   dataDesc: {
     fontSize: 12.5,

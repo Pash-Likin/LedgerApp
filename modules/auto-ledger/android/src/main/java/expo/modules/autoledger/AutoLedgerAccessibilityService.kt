@@ -1,24 +1,49 @@
 package expo.modules.autoledger
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 class AutoLedgerAccessibilityService : AccessibilityService() {
+  private val mainHandler = Handler(Looper.getMainLooper())
   private var lastScanAtMs = 0L
+  private var pendingRunnable: Runnable? = null
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event == null) return
     val pkg = event.packageName?.toString() ?: return
     if (pkg == applicationContext.packageName) return
     if (!AutoLedgerStore.isAccessibilityFeatureEnabled(applicationContext)) return
-    if (!PaymentTextParser.isMonitoredPackage(pkg)) return
+    if (!PaymentTextParser.isMonitoredPackage(pkg) || PaymentTextParser.isSmsPackage(pkg)) return
 
+    // Trailing debounce ensures we always scan the final rendered payment screen
+    pendingRunnable?.let { mainHandler.removeCallbacks(it) }
     val now = SystemClock.elapsedRealtime()
-    if (now - lastScanAtMs < 500L) return
-    lastScanAtMs = now
+    val delayMs = if (now - lastScanAtMs >= 650L) 180L else 320L
 
+    val task = Runnable {
+      lastScanAtMs = SystemClock.elapsedRealtime()
+      scanActiveWindow(pkg)
+    }
+    pendingRunnable = task
+    mainHandler.postDelayed(task, delayMs)
+  }
+
+  override fun onInterrupt() {
+    pendingRunnable?.let { mainHandler.removeCallbacks(it) }
+    pendingRunnable = null
+  }
+
+  override fun onDestroy() {
+    pendingRunnable?.let { mainHandler.removeCallbacks(it) }
+    pendingRunnable = null
+    super.onDestroy()
+  }
+
+  private fun scanActiveWindow(pkg: String) {
     val root = try {
       rootInActiveWindow
     } catch (_: Exception) {
@@ -31,12 +56,29 @@ class AutoLedgerAccessibilityService : AccessibilityService() {
 
     val combined = textParts.distinct().joinToString(" ")
     val sourceApp = PaymentTextParser.getSourceAppName(pkg)
-    val parsed = PaymentTextParser.parse(
+    val outcome = PaymentTextParser.parseWithReason(
       sourceApp = sourceApp,
       title = "",
       content = combined,
-      requireCompletionHeader = true
-    ) ?: return
+      requireCompletionHeader = true,
+      isSms = false
+    )
+
+    val parsed = outcome.parsed
+    if (parsed == null) {
+      // Log only when the page had a completion header (avoid spamming logs during casual browsing)
+      if (outcome.rejectReason != "未出现支付完成页标志" && PaymentTextParser.hasCompletionOrCurrencyHint(combined)) {
+        AutoLedgerStore.appendLog(
+          context = applicationContext,
+          sourceApp = sourceApp,
+          channel = "accessibility",
+          rawSnippet = combined,
+          outcome = "跳过：${outcome.rejectReason ?: "未匹配"}",
+          matched = false
+        )
+      }
+      return
+    }
 
     if (AutoLedgerStore.isDuplicateCapture(
         applicationContext,
@@ -49,13 +91,18 @@ class AutoLedgerAccessibilityService : AccessibilityService() {
     }
 
     val record = AutoLedgerStore.addCapture(applicationContext, parsed, "accessibility")
+    val yuan = AutoLedgerStore.formatCentsYuan(parsed.amountCents)
+    AutoLedgerStore.appendLog(
+      context = applicationContext,
+      sourceApp = sourceApp,
+      channel = "accessibility",
+      rawSnippet = combined,
+      outcome = "已识别 ¥$yuan → ${parsed.suggestedCategoryName}",
+      matched = true
+    )
     CaptureNotifier.showCaptureNotification(applicationContext, record)
     LedgerSummaryWidgetProvider.refreshAllWidgets(applicationContext)
     AutoLedgerBridge.notifyCapturesUpdated()
-  }
-
-  override fun onInterrupt() {
-    // Nothing to clean up
   }
 
   private fun collectNodeTexts(
@@ -63,7 +110,7 @@ class AutoLedgerAccessibilityService : AccessibilityService() {
     out: MutableList<String>,
     depth: Int
   ) {
-    if (node == null || depth > 12 || out.size >= 80) return
+    if (node == null || depth > 18 || out.size >= 200) return
 
     val text = node.text?.toString()?.trim()
     if (!text.isNullOrEmpty()) {
@@ -77,7 +124,7 @@ class AutoLedgerAccessibilityService : AccessibilityService() {
 
     val count = node.childCount
     for (i in 0 until count) {
-      if (out.size >= 80) break
+      if (out.size >= 200) break
       val child = try {
         node.getChild(i)
       } catch (_: Exception) {

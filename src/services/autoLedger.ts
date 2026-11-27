@@ -27,6 +27,15 @@ export interface CapturedRecord {
   createdAtMs: number;
 }
 
+export interface CaptureLogEntry {
+  timestamp: string;
+  sourceApp: string;
+  channel: CaptureChannel;
+  snippet: string;
+  outcome: string;
+  matched: boolean;
+}
+
 export interface AutoLedgerPermissions {
   notificationListener: boolean;
   accessibility: boolean;
@@ -36,6 +45,7 @@ export interface AutoLedgerPermissions {
 export interface AutoLedgerSettings {
   notificationEnabled: boolean;
   accessibilityEnabled: boolean;
+  hapticsEnabled?: boolean;
 }
 
 export interface LaunchAction {
@@ -65,6 +75,10 @@ declare class AutoLedgerNativeModule extends NativeModule<AutoLedgerNativeEvents
   openBatteryOptimizationSettings(): void;
   getSettings(): AutoLedgerSettings;
   updateSettings(notificationEnabled: boolean, accessibilityEnabled: boolean): void;
+  getHapticsEnabled(): boolean;
+  setHapticsEnabled(enabled: boolean): void;
+  getCaptureLogs(): string;
+  clearCaptureLogs(): void;
   getCaptures(): string;
   removeCapture(id: string): void;
   clearConfirmedCaptures(idsJson: string): void;
@@ -85,12 +99,92 @@ const nativeModule =
     ? requireOptionalNativeModule<AutoLedgerNativeModule>('AutoLedger')
     : null;
 
-// In-memory preview queue used when previewing in Web / Expo Go without native APK
+const WEB_HAPTICS_KEY = 'qingjizhang_haptics_enabled';
+const WEB_AUTO_CAPTURE_KEY = 'qingjizhang_auto_capture_settings';
 let previewFallbackCaptures: CapturedRecord[] = [];
+let previewFallbackLogs: CaptureLogEntry[] = [];
+let fallbackHapticsEnabled = true;
+let fallbackCaptureSettings: {
+  notificationEnabled: boolean;
+  accessibilityEnabled: boolean;
+} = {
+  notificationEnabled: false,
+  accessibilityEnabled: false,
+};
 const previewListeners = new Set<() => void>();
+const settingsListeners = new Set<(settings: AutoLedgerSettings) => void>();
 
 function notifyPreviewListeners(): void {
   previewListeners.forEach((cb) => cb());
+}
+
+function notifySettingsListeners(settings: AutoLedgerSettings): void {
+  settingsListeners.forEach((cb) => cb(settings));
+}
+
+function readWebCaptureSettings(): {
+  notificationEnabled: boolean;
+  accessibilityEnabled: boolean;
+} {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = window.localStorage.getItem(WEB_AUTO_CAPTURE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<{
+          notificationEnabled: boolean;
+          accessibilityEnabled: boolean;
+        }>;
+        return {
+          notificationEnabled: Boolean(parsed.notificationEnabled),
+          accessibilityEnabled: Boolean(parsed.accessibilityEnabled),
+        };
+      }
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return { ...fallbackCaptureSettings };
+}
+
+function writeWebCaptureSettings(
+  notificationEnabled: boolean,
+  accessibilityEnabled: boolean
+): void {
+  fallbackCaptureSettings = { notificationEnabled, accessibilityEnabled };
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(
+        WEB_AUTO_CAPTURE_KEY,
+        JSON.stringify(fallbackCaptureSettings)
+      );
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
+function readWebHaptics(): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const val = window.localStorage.getItem(WEB_HAPTICS_KEY);
+      if (val === 'false') return false;
+      if (val === 'true') return true;
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+  return fallbackHapticsEnabled;
+}
+
+function writeWebHaptics(enabled: boolean): void {
+  fallbackHapticsEnabled = enabled;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(WEB_HAPTICS_KEY, enabled ? 'true' : 'false');
+    }
+  } catch {
+    // Ignore storage access errors
+  }
 }
 
 export const autoLedger = {
@@ -144,20 +238,90 @@ export const autoLedger = {
 
   getSettings(): AutoLedgerSettings {
     if (!nativeModule) {
-      return { notificationEnabled: true, accessibilityEnabled: true };
+      const saved = readWebCaptureSettings();
+      return {
+        notificationEnabled: saved.notificationEnabled,
+        accessibilityEnabled: saved.accessibilityEnabled,
+        hapticsEnabled: readWebHaptics(),
+      };
     }
     try {
       return nativeModule.getSettings();
     } catch {
-      return { notificationEnabled: true, accessibilityEnabled: true };
+      return {
+        notificationEnabled: false,
+        accessibilityEnabled: false,
+        hapticsEnabled: true,
+      };
     }
   },
 
   updateSettings(settings: AutoLedgerSettings): void {
+    writeWebCaptureSettings(
+      settings.notificationEnabled,
+      settings.accessibilityEnabled
+    );
     nativeModule?.updateSettings(
       settings.notificationEnabled,
       settings.accessibilityEnabled
     );
+    notifySettingsListeners({
+      ...settings,
+      hapticsEnabled: settings.hapticsEnabled ?? this.getHapticsEnabled(),
+    });
+  },
+
+  subscribeSettingsChanged(
+    listener: (settings: AutoLedgerSettings) => void
+  ): () => void {
+    settingsListeners.add(listener);
+    return () => {
+      settingsListeners.delete(listener);
+    };
+  },
+
+  getHapticsEnabled(): boolean {
+    if (!nativeModule) {
+      return readWebHaptics();
+    }
+    try {
+      return nativeModule.getHapticsEnabled();
+    } catch {
+      return true;
+    }
+  },
+
+  setHapticsEnabled(enabled: boolean): void {
+    writeWebHaptics(enabled);
+    if (!nativeModule) return;
+    try {
+      nativeModule.setHapticsEnabled(enabled);
+    } catch {
+      // Ignore native bridge error
+    }
+  },
+
+  getCaptureLogs(): CaptureLogEntry[] {
+    if (!nativeModule) {
+      return [...previewFallbackLogs];
+    }
+    try {
+      const raw = nativeModule.getCaptureLogs();
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as CaptureLogEntry[]) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  clearCaptureLogs(): void {
+    previewFallbackLogs = [];
+    if (!nativeModule) return;
+    try {
+      nativeModule.clearCaptureLogs();
+    } catch {
+      // Ignore
+    }
   },
 
   getCaptures(): CapturedRecord[] {
@@ -267,6 +431,17 @@ export const autoLedger = {
       createdAtMs: nowMs,
     };
     previewFallbackCaptures = [record, ...previewFallbackCaptures];
+    previewFallbackLogs = [
+      {
+        timestamp: formatLocalDateTime(new Date(nowMs)).slice(5).replace('T', ' '),
+        sourceApp,
+        channel: 'demo',
+        snippet: sampleText,
+        outcome: `模拟识别 ¥${(parsed.amountCents / 100).toFixed(2)} → ${parsed.suggestedCategoryName}`,
+        matched: true,
+      },
+      ...previewFallbackLogs.slice(0, 24),
+    ];
     notifyPreviewListeners();
     return true;
   },

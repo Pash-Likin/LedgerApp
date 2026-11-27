@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
+  Keyboard,
   Modal,
   Pressable,
   ScrollView,
@@ -8,13 +9,16 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CATEGORY_COLOR_OPTIONS,
   CATEGORY_ICON_OPTIONS,
 } from '../constants/categories';
 import { COLORS, RADIUS, SHADOW, SPACING } from '../constants/theme';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { showAlert } from '../services/dialog';
 import { triggerSelectionHaptic, triggerSuccessHaptic } from '../services/haptics';
 import type { Category, TransactionType } from '../types/ledger';
@@ -39,6 +43,9 @@ export function CategoryEditorModal({
   onSave,
   onClose,
 }: CategoryEditorModalProps) {
+  const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const { keyboardHeight, isKeyboardVisible } = useKeyboardHeight(visible);
   const [name, setName] = useState('');
   const [icon, setIcon] = useState<string>(CATEGORY_ICON_OPTIONS[0]);
   const [color, setColor] = useState<string>(CATEGORY_COLOR_OPTIONS[0]);
@@ -101,6 +108,11 @@ export function CategoryEditorModal({
     ? '新增支出分类'
     : '新增收入分类';
 
+  const sheetMaxHeight = Math.max(
+    280,
+    windowHeight - keyboardHeight - insets.top - 24
+  );
+
   return (
     <Modal
       visible={visible}
@@ -108,8 +120,28 @@ export function CategoryEditorModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation()}>
+      <Pressable
+        style={[styles.backdrop, { paddingBottom: keyboardHeight }]}
+        onPress={() => {
+          if (isKeyboardVisible) {
+            Keyboard.dismiss();
+          } else {
+            onClose();
+          }
+        }}
+      >
+        <Pressable
+          style={[
+            styles.sheet,
+            {
+              maxHeight: sheetMaxHeight,
+              paddingBottom: isKeyboardVisible
+                ? SPACING.md
+                : Math.max(insets.bottom, SPACING.lg),
+            },
+          ]}
+          onPress={(e) => e.stopPropagation()}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>{title}</Text>
             <TouchableOpacity onPress={onClose} hitSlop={8}>
@@ -117,32 +149,34 @@ export function CategoryEditorModal({
             </TouchableOpacity>
           </View>
 
+          {/* Pinned above ScrollView so category name input always stays visible when keyboard opens */}
+          <View style={styles.previewRow}>
+            <View style={[styles.previewBadge, { backgroundColor: `${color}1A` }]}>
+              <Ionicons
+                name={icon as keyof typeof Ionicons.glyphMap}
+                size={28}
+                color={color}
+              />
+            </View>
+            <View style={styles.previewInputWrap}>
+              <Text style={styles.fieldLabel}>分类名称</Text>
+              <TextInput
+                style={styles.nameInput}
+                value={name}
+                onChangeText={setName}
+                placeholder="例如：咖啡、宠物、房贷"
+                placeholderTextColor={COLORS.textMuted}
+                maxLength={8}
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+            </View>
+          </View>
+
           <ScrollView
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
           >
-            <View style={styles.previewRow}>
-              <View style={[styles.previewBadge, { backgroundColor: `${color}1A` }]}>
-                <Ionicons
-                  name={icon as keyof typeof Ionicons.glyphMap}
-                  size={28}
-                  color={color}
-                />
-              </View>
-              <View style={styles.previewInputWrap}>
-                <Text style={styles.fieldLabel}>分类名称</Text>
-                <TextInput
-                  style={styles.nameInput}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="例如：咖啡、宠物、房贷"
-                  placeholderTextColor={COLORS.textMuted}
-                  maxLength={8}
-                  returnKeyType="done"
-                />
-              </View>
-            </View>
-
             <Text style={styles.sectionLabel}>选择颜色</Text>
             <View style={styles.colorGrid}>
               {CATEGORY_COLOR_OPTIONS.map((c) => {

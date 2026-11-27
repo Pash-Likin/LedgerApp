@@ -127,8 +127,10 @@ object AutoLedgerStore {
 
   private const val PREFS_NAME = "qingjizhang_auto_ledger_prefs"
   private const val KEY_CAPTURES = "captures_json"
+  private const val KEY_CAPTURE_LOGS = "capture_logs_json"
   private const val KEY_NOTIFICATION_ENABLED = "notification_capture_enabled"
   private const val KEY_ACCESSIBILITY_ENABLED = "accessibility_capture_enabled"
+  private const val KEY_HAPTICS_ENABLED = "haptics_enabled"
   private const val KEY_WIDGET_MONTH = "widget_month_label"
   private const val KEY_WIDGET_EXPENSE = "widget_expense_cents"
   private const val KEY_WIDGET_INCOME = "widget_income_cents"
@@ -141,10 +143,17 @@ object AutoLedgerStore {
     context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
   fun isNotificationListenerFeatureEnabled(context: Context): Boolean =
-    prefs(context).getBoolean(KEY_NOTIFICATION_ENABLED, true)
+    prefs(context).getBoolean(KEY_NOTIFICATION_ENABLED, false)
 
   fun isAccessibilityFeatureEnabled(context: Context): Boolean =
-    prefs(context).getBoolean(KEY_ACCESSIBILITY_ENABLED, true)
+    prefs(context).getBoolean(KEY_ACCESSIBILITY_ENABLED, false)
+
+  fun isHapticsEnabled(context: Context): Boolean =
+    prefs(context).getBoolean(KEY_HAPTICS_ENABLED, true)
+
+  fun setHapticsEnabled(context: Context, enabled: Boolean) {
+    prefs(context).edit().putBoolean(KEY_HAPTICS_ENABLED, enabled).apply()
+  }
 
   fun setFeatureSettings(
     context: Context,
@@ -199,6 +208,58 @@ object AutoLedgerStore {
       ) == PackageManager.PERMISSION_GRANTED
     } else {
       true
+    }
+  }
+
+  fun appendLog(
+    context: Context,
+    sourceApp: String,
+    channel: String,
+    rawSnippet: String,
+    outcome: String,
+    matched: Boolean
+  ) {
+    synchronized(lock) {
+      val nowStr = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date())
+      val trimmedSnippet = rawSnippet.replace(Regex("\\s+"), " ").trim().let {
+        if (it.length > 72) it.take(72) + "…" else it
+      }
+      val entry = JSONObject().apply {
+        put("timestamp", nowStr)
+        put("sourceApp", sourceApp)
+        put("channel", channel)
+        put("snippet", trimmedSnippet)
+        put("outcome", outcome)
+        put("matched", matched)
+      }
+
+      val existingRaw = prefs(context).getString(KEY_CAPTURE_LOGS, null)
+      val next = JSONArray()
+      next.put(entry)
+      if (existingRaw != null) {
+        try {
+          val old = JSONArray(existingRaw)
+          val limit = kotlin.math.min(old.length(), 24)
+          for (i in 0 until limit) {
+            next.put(old.getJSONObject(i))
+          }
+        } catch (_: Exception) {
+          // Reset corrupt log cache
+        }
+      }
+      prefs(context).edit().putString(KEY_CAPTURE_LOGS, next.toString()).apply()
+    }
+  }
+
+  fun getLogsJson(context: Context): String {
+    synchronized(lock) {
+      return prefs(context).getString(KEY_CAPTURE_LOGS, "[]") ?: "[]"
+    }
+  }
+
+  fun clearLogs(context: Context) {
+    synchronized(lock) {
+      prefs(context).edit().putString(KEY_CAPTURE_LOGS, "[]").apply()
     }
   }
 
@@ -268,7 +329,6 @@ object AutoLedgerStore {
       if (updated != null) {
         saveCapturesLocked(context, next)
         val rec = updated!!
-        // Optimistically update widget snapshot while app DB catches up on next foreground sync
         val p = prefs(context)
         val curExpense = p.getLong(KEY_WIDGET_EXPENSE, 0L)
         val curIncome = p.getLong(KEY_WIDGET_INCOME, 0L)

@@ -5,5 +5,5 @@
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:description="@string/auto_ledger_accessibility_desc"
-    android:notificationTimeout="300"
-    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone,com.sankuai.meituan,com.sankuai.meituan.takeoutnew,com.unionpay,com.jingdong.app.mall,com.xunmeng.pinduoduo,com.ss.android.ugc.aweme" />
+    android:notificationTimeout="250"
+    android:packageNames="com.tencent.mm,com.eg.android.AlipayGphone,com.sankuai.meituan,com.sankuai.meituan.takeoutnew,com.dianping.v1,me.ele,com.taobao.taobao,com.tmall.wireless,com.jingdong.app.mall,com.xunmeng.pinduoduo,com.ss.android.ugc.aweme,com.unionpay,com.sdu.didi.psnger,com.didiglobal.passenger,com.icbc,com.chinamworld.main,cmb.pb,com.android.bankabc,com.chinamworld.bocmbci,com.bankcomm.Bankcomm,com.pingan.paces.ccms" />

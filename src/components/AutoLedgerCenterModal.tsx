@@ -19,9 +19,16 @@ import {
   type AutoLedgerPermissions,
   type AutoLedgerSettings,
   type CapturedRecord,
+  type CaptureLogEntry,
 } from '../services/autoLedger';
 import { showAlert } from '../services/dialog';
-import { triggerSelectionHaptic, triggerSuccessHaptic } from '../services/haptics';
+import {
+  isHapticsEnabled,
+  setHapticsEnabled,
+  subscribeHapticsChanged,
+  triggerSelectionHaptic,
+  triggerSuccessHaptic,
+} from '../services/haptics';
 import { computeMonthlySummary } from '../utils/analytics';
 import { formatYearMonthLabel } from '../utils/date';
 import { formatYuan } from '../utils/money';
@@ -53,6 +60,9 @@ export function AutoLedgerCenterModal({
   const [settings, setSettings] = useState<AutoLedgerSettings>(() =>
     autoLedger.getSettings()
   );
+  const [hapticsOn, setHapticsOn] = useState<boolean>(() => isHapticsEnabled());
+  const [captureLogs, setCaptureLogs] = useState<CaptureLogEntry[]>([]);
+  const [logsExpanded, setLogsExpanded] = useState(false);
 
   const isNative = autoLedger.isNativeAvailable();
   const widgetSummary = useMemo(
@@ -63,8 +73,21 @@ export function AutoLedgerCenterModal({
   const refreshNativeStatus = useCallback(() => {
     setPermissions(autoLedger.getPermissionStatus());
     setSettings(autoLedger.getSettings());
+    setHapticsOn(isHapticsEnabled());
+    setCaptureLogs(autoLedger.getCaptureLogs());
     syncAutoCaptures().catch(() => {});
   }, [syncAutoCaptures]);
+
+  useEffect(() => {
+    const unsubHaptics = subscribeHapticsChanged((enabled) => setHapticsOn(enabled));
+    const unsubSettings = autoLedger.subscribeSettingsChanged((next) =>
+      setSettings(next)
+    );
+    return () => {
+      unsubHaptics();
+      unsubSettings();
+    };
+  }, []);
 
   useEffect(() => {
     if (!visible) return;
@@ -78,6 +101,26 @@ export function AutoLedgerCenterModal({
     return () => sub.remove();
   }, [visible, refreshNativeStatus]);
 
+  const autoCaptureEnabled =
+    settings.notificationEnabled || settings.accessibilityEnabled;
+
+  const handleToggleMasterAutoCapture = (enabled: boolean) => {
+    triggerSelectionHaptic();
+    const next: AutoLedgerSettings = enabled
+      ? {
+          ...settings,
+          notificationEnabled: true,
+          accessibilityEnabled: settings.accessibilityEnabled,
+        }
+      : {
+          ...settings,
+          notificationEnabled: false,
+          accessibilityEnabled: false,
+        };
+    setSettings(next);
+    autoLedger.updateSettings(next);
+  };
+
   const handleToggleSetting = (
     key: 'notificationEnabled' | 'accessibilityEnabled',
     value: boolean
@@ -86,6 +129,19 @@ export function AutoLedgerCenterModal({
     const next = { ...settings, [key]: value };
     setSettings(next);
     autoLedger.updateSettings(next);
+  };
+
+  const handleToggleHaptics = (value: boolean) => {
+    setHapticsEnabled(value);
+    setHapticsOn(value);
+    if (value) {
+      triggerSelectionHaptic();
+    }
+  };
+
+  const handleClearLogs = () => {
+    autoLedger.clearCaptureLogs();
+    setCaptureLogs([]);
   };
 
   const handleRequestPostPermission = () => {
@@ -170,9 +226,9 @@ export function AutoLedgerCenterModal({
         >
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>自动记账与桌面小组件</Text>
+              <Text style={styles.title}>小组件与扩展功能</Text>
               <Text style={styles.subtitle}>
-                识别微信、支付宝、美团支付后弹出通知确认记账
+                桌面小组件一键添加 · 付款通知识别按需开启
               </Text>
             </View>
             <TouchableOpacity
@@ -196,180 +252,16 @@ export function AutoLedgerCenterModal({
                   color={COLORS.warning}
                 />
                 <Text style={styles.noticeText}>
-                  当前未检测到安卓原生模块（可能处于浏览器或 Expo Go 预览）。重新运行 EAS 云端打包并安装最新 APK 后，通知监听、无障碍识别与桌面小组件即可全部生效。
+                  当前未检测到安卓原生模块（可能处于浏览器或 Expo Go 预览）。安装安卓 APK 后，桌面小组件与可选自动记账功能即可生效。
                 </Text>
               </View>
             ) : null}
 
-            {/* 1. Permissions & Auto-capture Controls */}
+            {/* 1. Home Screen Widget */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>一、安卓实时自动记账权限</Text>
+              <Text style={styles.sectionTitle}>手机桌面小组件</Text>
               <Text style={styles.sectionDesc}>
-                开启「通知使用权」或「无障碍服务」后，在微信、支付宝、美团支付完成时会自动识别金额与商户，并弹出通知询问你是否记账及类型。
-              </Text>
-
-              <PermissionRow
-                icon="notifications-outline"
-                title="1. 弹出确认通知权限（必开）"
-                desc="用于在手机顶部弹出「是否记账 / 选分类」提示通知"
-                granted={permissions.postNotifications}
-                buttonText={permissions.postNotifications ? '已开启' : '去开启'}
-                onPress={handleRequestPostPermission}
-              />
-
-              <PermissionRow
-                icon="shield-checkmark-outline"
-                title="2. 通知栏使用权（推荐）"
-                desc="监听微信支付、支付宝、美团扣款/收款推送通知"
-                granted={permissions.notificationListener}
-                buttonText={permissions.notificationListener ? '已授权' : '去授权'}
-                onPress={() => autoLedger.openNotificationListenerSettings()}
-              />
-
-              <PermissionRow
-                icon="accessibility-outline"
-                title="3. 无障碍服务（补充兜底）"
-                desc="当微信/美团关闭通知推送时，在“支付成功”界面自动识别"
-                granted={permissions.accessibility}
-                buttonText={permissions.accessibility ? '已开启' : '去开启'}
-                onPress={() => autoLedger.openAccessibilitySettings()}
-              />
-
-              <PermissionRow
-                icon="battery-charging-outline"
-                title="4. 后台运行省电设置（可选）"
-                desc="防止国产手机系统在锁屏后杀死监听服务"
-                granted={null}
-                buttonText="去设置"
-                onPress={() => autoLedger.openBatteryOptimizationSettings()}
-                isLast
-              />
-
-              <View style={styles.switchBlock}>
-                <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>启用通知栏监听识别</Text>
-                  <Switch
-                    value={settings.notificationEnabled}
-                    onValueChange={(v) =>
-                      handleToggleSetting('notificationEnabled', v)
-                    }
-                    trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
-                    thumbColor={
-                      settings.notificationEnabled
-                        ? COLORS.primary
-                        : COLORS.textMuted
-                    }
-                  />
-                </View>
-                <View style={styles.switchRow}>
-                  <Text style={styles.switchLabel}>启用支付成功页无障碍识别</Text>
-                  <Switch
-                    value={settings.accessibilityEnabled}
-                    onValueChange={(v) =>
-                      handleToggleSetting('accessibilityEnabled', v)
-                    }
-                    trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
-                    thumbColor={
-                      settings.accessibilityEnabled
-                        ? COLORS.primary
-                        : COLORS.textMuted
-                    }
-                  />
-                </View>
-              </View>
-
-              <View style={styles.simSection}>
-                <Text style={styles.simTitle}>测试通知弹窗效果</Text>
-                <View style={styles.simBtns}>
-                  <TouchableOpacity
-                    onPress={() =>
-                      handleSimulate(
-                        '美团外卖',
-                        '订单支付成功，在美团外卖消费实付¥36.50'
-                      )
-                    }
-                    style={styles.simBtn}
-                  >
-                    <Text style={styles.simBtnText}>模拟美团外卖 ¥36.50</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={() =>
-                      handleSimulate(
-                        '微信',
-                        '微信支付：你已向瑞幸咖啡付款18.80元'
-                      )
-                    }
-                    style={styles.simBtn}
-                  >
-                    <Text style={styles.simBtnText}>模拟微信咖啡 ¥18.80</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </View>
-
-            {/* 2. Pending Captures */}
-            <View style={styles.sectionCard}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.sectionTitle}>
-                  二、待确认自动记账（{pendingCaptures.length}）
-                </Text>
-                <TouchableOpacity onPress={refreshNativeStatus} hitSlop={8}>
-                  <Text style={styles.linkText}>刷新</Text>
-                </TouchableOpacity>
-              </View>
-
-              {pendingCaptures.length === 0 ? (
-                <Text style={styles.emptyPending}>
-                  暂无待处理记录。收到支付通知或点击上方模拟按钮后会显示在这里。
-                </Text>
-              ) : (
-                <View style={styles.pendingList}>
-                  {pendingCaptures.map((item) => (
-                    <View key={item.id} style={styles.pendingRow}>
-                      <TouchableOpacity
-                        style={styles.pendingMain}
-                        onPress={() => onReviewCapture(item)}
-                      >
-                        <Text style={styles.pendingTitle}>
-                          {item.merchant} ·{' '}
-                          <Text
-                            style={{
-                              color:
-                                item.type === 'expense'
-                                  ? COLORS.expense
-                                  : COLORS.income,
-                            }}
-                          >
-                            {item.type === 'expense' ? '-' : '+'}¥
-                            {formatYuan(item.amountCents)}
-                          </Text>
-                        </Text>
-                        <Text style={styles.pendingMeta}>
-                          来源：{item.sourceApp} · 推荐「{item.suggestedCategoryName}」· 点击选择分类
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        onPress={() => ignorePendingCapture(item.id)}
-                        style={styles.pendingIgnore}
-                        hitSlop={8}
-                      >
-                        <Ionicons
-                          name="trash-outline"
-                          size={17}
-                          color={COLORS.textMuted}
-                        />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-
-            {/* 3. Home Screen Widget */}
-            <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>三、手机桌面小组件</Text>
-              <Text style={styles.sectionDesc}>
-                在安卓桌面展示本月支出、收入、结余与最新一条账单，并支持直接点小组件右上角「+ 记一笔」秒开记账。
+                无需任何敏感权限。在安卓桌面展示本月支出、收入、结余与最新一条账单，并支持点击右上角「+ 记一笔」秒开记账。
               </Text>
 
               {/* Mini Widget Preview */}
@@ -430,6 +322,342 @@ export function AutoLedgerCenterModal({
                 </TouchableOpacity>
               </View>
             </View>
+
+            {/* 2. Vibration / Haptics Preference */}
+            <View style={styles.sectionCard}>
+              <View style={styles.switchRow}>
+                <View style={styles.switchTextCol}>
+                  <Text style={styles.sectionTitle}>记账与按键震动反馈</Text>
+                  <Text style={styles.switchSub}>
+                    关闭后点击按键、确认记账与提醒通知均不再震动
+                  </Text>
+                </View>
+                <Switch
+                  value={hapticsOn}
+                  onValueChange={handleToggleHaptics}
+                  trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
+                  thumbColor={hapticsOn ? COLORS.primary : COLORS.textMuted}
+                />
+              </View>
+            </View>
+
+            {/* 3. Optional Auto-capture Controls */}
+            <View style={styles.sectionCard}>
+              <View style={styles.switchRow}>
+                <View style={styles.switchTextCol}>
+                  <View style={styles.titleBadgeRow}>
+                    <Text style={styles.sectionTitle}>付款通知自动记账</Text>
+                    <View
+                      style={[
+                        styles.optBadge,
+                        autoCaptureEnabled && styles.optBadgeOn,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.optBadgeText,
+                          autoCaptureEnabled && styles.optBadgeTextOn,
+                        ]}
+                      >
+                        {autoCaptureEnabled ? '已开启' : '可选 · 已关闭'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.switchSub}>
+                    默认关闭，无需强制开启；仅在希望自动识别微信/支付宝/美团/银行扣款通知时打开。
+                  </Text>
+                </View>
+                <Switch
+                  value={autoCaptureEnabled}
+                  onValueChange={handleToggleMasterAutoCapture}
+                  trackColor={{ false: COLORS.border, true: COLORS.primaryTint }}
+                  thumbColor={
+                    autoCaptureEnabled ? COLORS.primary : COLORS.textMuted
+                  }
+                />
+              </View>
+
+              {!autoCaptureEnabled ? (
+                <View style={styles.disabledHintBox}>
+                  <Text style={styles.disabledHintText}>
+                    当前处于纯手动记账模式，应用不会监听手机通知栏或任何页面内容，也不会申请相关系统权限。
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.switchBlock}>
+                    <View style={styles.switchRow}>
+                      <Text style={styles.switchLabel}>通知栏监听识别</Text>
+                      <Switch
+                        value={settings.notificationEnabled}
+                        onValueChange={(v) =>
+                          handleToggleSetting('notificationEnabled', v)
+                        }
+                        trackColor={{
+                          false: COLORS.border,
+                          true: COLORS.primaryTint,
+                        }}
+                        thumbColor={
+                          settings.notificationEnabled
+                            ? COLORS.primary
+                            : COLORS.textMuted
+                        }
+                      />
+                    </View>
+                    <View style={styles.switchRow}>
+                      <Text style={styles.switchLabel}>
+                        支付成功页无障碍识别（补充）
+                      </Text>
+                      <Switch
+                        value={settings.accessibilityEnabled}
+                        onValueChange={(v) =>
+                          handleToggleSetting('accessibilityEnabled', v)
+                        }
+                        trackColor={{
+                          false: COLORS.border,
+                          true: COLORS.primaryTint,
+                        }}
+                        thumbColor={
+                          settings.accessibilityEnabled
+                            ? COLORS.primary
+                            : COLORS.textMuted
+                        }
+                      />
+                    </View>
+                  </View>
+
+                  <View style={styles.permGroup}>
+                    <PermissionRow
+                      icon="notifications-outline"
+                      title="1. 弹出确认通知权限"
+                      desc="用于在顶部弹出「是否记账 / 选分类」提示通知"
+                      granted={permissions.postNotifications}
+                      buttonText={permissions.postNotifications ? '已开启' : '去开启'}
+                      onPress={handleRequestPostPermission}
+                    />
+
+                    <PermissionRow
+                      icon="shield-checkmark-outline"
+                      title="2. 通知栏使用权"
+                      desc="监听微信支付、支付宝、美团及银行扣款短信通知"
+                      granted={permissions.notificationListener}
+                      buttonText={
+                        permissions.notificationListener ? '已授权' : '去授权'
+                      }
+                      onPress={() =>
+                        autoLedger.openNotificationListenerSettings()
+                      }
+                    />
+
+                    <PermissionRow
+                      icon="accessibility-outline"
+                      title="3. 无障碍服务（可选兜底）"
+                      desc="当微信/美团关闭通知推送时，在“支付成功”界面识别"
+                      granted={permissions.accessibility}
+                      buttonText={permissions.accessibility ? '已开启' : '去开启'}
+                      onPress={() => autoLedger.openAccessibilitySettings()}
+                    />
+
+                    <PermissionRow
+                      icon="battery-charging-outline"
+                      title="4. 后台运行省电设置（可选）"
+                      desc="防止部分安卓系统锁屏后回收监听服务"
+                      granted={null}
+                      buttonText="去设置"
+                      onPress={() =>
+                        autoLedger.openBatteryOptimizationSettings()
+                      }
+                      isLast
+                    />
+                  </View>
+
+                  <View style={styles.improveTipBox}>
+                    <Text style={styles.improveTipTitle}>
+                      提升微信 / 美团触发率提示
+                    </Text>
+                    <Text style={styles.improveTipText}>
+                      • 微信需在「我 → 设置 → 消息通知」中开启「通知显示消息详情」，否则通知栏不显示金额。{'\n'}
+                      • 如不习惯自动记账，随时关闭上方总开关即可彻底停用。
+                    </Text>
+                  </View>
+
+                  <View style={styles.simSection}>
+                    <Text style={styles.simTitle}>测试通知弹窗效果</Text>
+                    <View style={styles.simBtns}>
+                      <TouchableOpacity
+                        onPress={() =>
+                          handleSimulate(
+                            '美团外卖',
+                            '订单支付成功，在美团外卖消费实付¥36.50'
+                          )
+                        }
+                        style={styles.simBtn}
+                      >
+                        <Text style={styles.simBtnText}>
+                          模拟美团外卖 ¥36.50
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() =>
+                          handleSimulate(
+                            '微信',
+                            '微信支付：你已向瑞幸咖啡付款18.80元'
+                          )
+                        }
+                        style={styles.simBtn}
+                      >
+                        <Text style={styles.simBtnText}>
+                          模拟微信咖啡 ¥18.80
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </>
+              )}
+            </View>
+
+            {/* 4. Pending Captures (only when enabled or non-empty) */}
+            {autoCaptureEnabled || pendingCaptures.length > 0 ? (
+              <View style={styles.sectionCard}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.sectionTitle}>
+                    待确认自动记账（{pendingCaptures.length}）
+                  </Text>
+                  <TouchableOpacity onPress={refreshNativeStatus} hitSlop={8}>
+                    <Text style={styles.linkText}>刷新</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {pendingCaptures.length === 0 ? (
+                  <Text style={styles.emptyPending}>
+                    暂无待处理记录。收到支付通知或点击上方模拟按钮后会显示在这里。
+                  </Text>
+                ) : (
+                  <View style={styles.pendingList}>
+                    {pendingCaptures.map((item) => (
+                      <View key={item.id} style={styles.pendingRow}>
+                        <TouchableOpacity
+                          style={styles.pendingMain}
+                          onPress={() => onReviewCapture(item)}
+                        >
+                          <Text style={styles.pendingTitle}>
+                            {item.merchant} ·{' '}
+                            <Text
+                              style={{
+                                color:
+                                  item.type === 'expense'
+                                    ? COLORS.expense
+                                    : COLORS.income,
+                              }}
+                            >
+                              {item.type === 'expense' ? '-' : '+'}¥
+                              {formatYuan(item.amountCents)}
+                            </Text>
+                          </Text>
+                          <Text style={styles.pendingMeta}>
+                            来源：{item.sourceApp} · 推荐「
+                            {item.suggestedCategoryName}」· 点击选择分类
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => ignorePendingCapture(item.id)}
+                          style={styles.pendingIgnore}
+                          hitSlop={8}
+                        >
+                          <Ionicons
+                            name="trash-outline"
+                            size={17}
+                            color={COLORS.textMuted}
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            ) : null}
+
+            {/* 5. Capture Diagnostic Logs (only when enabled or non-empty) */}
+            {autoCaptureEnabled || captureLogs.length > 0 ? (
+              <View style={styles.sectionCard}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setLogsExpanded((v) => !v);
+                    setCaptureLogs(autoLedger.getCaptureLogs());
+                  }}
+                  style={styles.rowBetween}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.sectionTitle}>
+                    最近监听诊断日志（{captureLogs.length}）
+                  </Text>
+                  <Ionicons
+                    name={logsExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color={COLORS.textSecondary}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.sectionDesc}>
+                  若开启自动记账后某次付款未弹窗，可展开此处查看系统是否收到通知及过滤原因。
+                </Text>
+
+                {logsExpanded ? (
+                  <View style={styles.logBlock}>
+                    <View style={styles.logToolbar}>
+                      <TouchableOpacity
+                        onPress={refreshNativeStatus}
+                        hitSlop={8}
+                      >
+                        <Text style={styles.linkText}>刷新日志</Text>
+                      </TouchableOpacity>
+                      {captureLogs.length > 0 ? (
+                        <TouchableOpacity onPress={handleClearLogs} hitSlop={8}>
+                          <Text style={styles.clearLogText}>清空</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+
+                    {captureLogs.length === 0 ? (
+                      <Text style={styles.emptyPending}>
+                        暂无监听记录。如果支付后此处仍为空，说明系统未把通知/页面事件发给本应用，请检查通知使用权、无障碍服务以及后台电池白名单。
+                      </Text>
+                    ) : (
+                      captureLogs.map((log, idx) => (
+                        <View
+                          key={`${log.timestamp}_${idx}`}
+                          style={styles.logItem}
+                        >
+                          <View style={styles.logMetaRow}>
+                            <Text style={styles.logSource}>
+                              {log.sourceApp} ·{' '}
+                              {log.channel === 'accessibility'
+                                ? '无障碍'
+                                : log.channel === 'demo'
+                                ? '模拟'
+                                : '通知'}
+                            </Text>
+                            <Text style={styles.logTime}>{log.timestamp}</Text>
+                          </View>
+                          <Text
+                            style={[
+                              styles.logOutcome,
+                              log.matched
+                                ? styles.logOutcomeOk
+                                : styles.logOutcomeSkip,
+                            ]}
+                          >
+                            {log.outcome}
+                          </Text>
+                          <Text style={styles.logSnippet} numberOfLines={2}>
+                            {log.snippet}
+                          </Text>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </ScrollView>
         </View>
       </View>
@@ -639,6 +867,131 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '600',
     color: COLORS.textPrimary,
+  },
+  switchTextCol: {
+    flex: 1,
+    paddingRight: SPACING.sm,
+  },
+  switchSub: {
+    fontSize: 11.5,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+    lineHeight: 16,
+  },
+  titleBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  optBadge: {
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  optBadgeOn: {
+    backgroundColor: COLORS.incomeSoft,
+    borderColor: COLORS.incomeSoft,
+  },
+  optBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+  },
+  optBadgeTextOn: {
+    color: COLORS.income,
+  },
+  disabledHintBox: {
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+  },
+  disabledHintText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    lineHeight: 17,
+  },
+  permGroup: {
+    marginTop: SPACING.sm,
+    paddingTop: SPACING.xs,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.divider,
+  },
+  improveTipBox: {
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.primarySoft,
+    borderWidth: 1,
+    borderColor: COLORS.primaryTint,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+  },
+  improveTipTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.primaryDark,
+    marginBottom: 3,
+  },
+  improveTipText: {
+    fontSize: 11.5,
+    color: COLORS.primaryDark,
+    lineHeight: 17,
+  },
+  logBlock: {
+    gap: 8,
+  },
+  logToolbar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  clearLogText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.expense,
+  },
+  logItem: {
+    backgroundColor: COLORS.surfaceAlt,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    gap: 2,
+  },
+  logMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  logSource: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: COLORS.textPrimary,
+  },
+  logTime: {
+    fontSize: 10.5,
+    color: COLORS.textMuted,
+    fontVariant: [...TABULAR_NUMS],
+  },
+  logOutcome: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  logOutcomeOk: {
+    color: COLORS.income,
+  },
+  logOutcomeSkip: {
+    color: COLORS.textSecondary,
+  },
+  logSnippet: {
+    fontSize: 11,
+    color: COLORS.textMuted,
   },
   simSection: {
     marginTop: SPACING.md,

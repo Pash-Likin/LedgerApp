@@ -10,9 +10,33 @@ export interface ParsedPaymentResult {
   rawSummary: string;
 }
 
-const NOISE_KEYWORDS = [
+export interface PaymentParseOutcome {
+  parsed: ParsedPaymentResult | null;
+  rejectReason: string | null;
+}
+
+const HARD_NOISE_KEYWORDS = [
   '验证码',
-  '登录',
+  '校验码',
+  '动态码',
+  '登录密码',
+  '好友申请',
+  '语音通话',
+  '视频通话',
+  '余额不足',
+  '付款失败',
+  '支付失败',
+  '交易失败',
+  '取消订单',
+  '待付款',
+  '去支付',
+  '立即支付',
+  '确认支付',
+  '去付款',
+  '立即付款',
+] as const;
+
+const SOFT_PROMO_KEYWORDS = [
   '满减',
   '代金券',
   '优惠券',
@@ -21,35 +45,76 @@ const NOISE_KEYWORDS = [
   '骑手已接单',
   '骑手正在赶往',
   '预计送达',
-  '好友申请',
-  '语音通话',
-  '视频通话',
-  '余额不足',
-  '付款失败',
-  '支付失败',
-  '取消订单',
+] as const;
+
+const STRONG_COMPLETION_SIGNALS = [
+  '支付成功',
+  '付款成功',
+  '支付完成',
+  '付款完成',
+  '交易成功',
+  '买单成功',
+  '已完成支付',
+  '已支付',
+  '订单已支付',
+  '成功支付',
+  '微信支付凭证',
+  '实付',
+  '实付款',
+  '已扣款',
+  '已收款',
+  '收款成功',
+  '收款到账',
+  '退款成功',
+  '已退回',
+  '快捷支付',
+  '消费人民币',
+  '支出人民币',
+  '入账人民币',
 ] as const;
 
 const COMPLETION_HEADERS = [
   '支付成功',
   '付款成功',
+  '支付完成',
+  '付款完成',
   '交易成功',
   '收款成功',
   '买单成功',
   '已完成支付',
+  '已支付',
+  '订单已支付',
   '收款到账',
+  '转账成功',
   '付款给',
+  '微信支付凭证',
   '账单详情',
+  '交易详情',
+  '已存入零钱',
+  '已收款',
 ] as const;
 
 const EXPENSE_PATTERNS = [
   /付款成功/,
   /支付成功/,
+  /支付完成/,
+  /付款完成/,
+  /已支付/,
+  /成功支付/,
+  /订单已支付/,
+  /微信支付/,
+  /支付凭证/,
   /消费/,
   /扣款/,
+  /扣费/,
+  /代扣/,
+  /支出/,
+  /转出/,
   /已向/,
-  /向.*付款/,
+  /向.{1,20}付款/,
   /付款给/,
+  /付款[：:\s]*[¥￥]?\d/,
+  /支付[：:\s]*[¥￥]?\d/,
   /实付/,
   /买单成功/,
   /已完成支付/,
@@ -57,7 +122,12 @@ const EXPENSE_PATTERNS = [
   /扫码付款/,
   /免密支付/,
   /自动扣费/,
+  /快捷支付/,
   /支付人民币/,
+  /花呗/,
+  /余额宝.*(?:支出|消费|付款)/,
+  /信用卡.*(?:消费|支出|扣款)/,
+  /尾号\d{4}.*(?:消费|支出|扣款|支付|转出)/,
 ] as const;
 
 const INCOME_KEYWORDS = [
@@ -67,30 +137,61 @@ const INCOME_KEYWORDS = [
   '收款到账',
   '微信支付收款',
   '支付宝收款',
+  '收款',
   '退款成功',
   '已退回',
   '退回至',
+  '退款',
   '红包已存入',
+  '已存入零钱',
   '入账',
+  '转入',
+  '到账',
   '工资到账',
   '分红',
+  '返现',
 ] as const;
 
-const KEYWORD_AMOUNT_REGEX =
-  /(?:实付|实付款|支付|付款|消费|扣款|收款|入账|退回|退款|金额|合计|共付|总计)[：:\s]*[¥￥]?\s*(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)/;
+const SMS_BANK_HINTS = [
+  '银行',
+  '信用卡',
+  '借记卡',
+  '尾号',
+  '账户',
+  '支付宝',
+  '财付通',
+  '微信支付',
+  '银联',
+  '云闪付',
+  '花呗',
+] as const;
+
+const PRIORITY_AMOUNT_REGEX =
+  /(?:实付|实付款|实际支付|支付金额|付款金额|扣款金额|本次支付|消费人民币|快捷支付人民币|支出人民币|收款人民币|入账人民币|退回人民币)[：:\s]*(?:RMB|CNY|[¥￥])?\s*(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)/g;
+
+const GENERAL_KEYWORD_AMOUNT_REGEX =
+  /(?:已支付|支付|付款|消费|扣款|扣费|支出|转出|收款|入账|转入|到账|退回|退款|金额|合计|共付|总计)[：:\s]*(?:人民币|RMB|CNY|[¥￥])?\s*(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)/g;
 
 const CURRENCY_AMOUNT_REGEX =
-  /(?:[¥￥]|RMB\s*|CNY\s*)(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)|(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)\s*元/;
+  /(?:[¥￥]|RMB|CNY)\s*(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)|(\d{1,7}(?:,\d{3})*(?:\.\d{1,2})?)\s*元/g;
+
+const NON_PAYMENT_PREFIX_REGEX =
+  /(?:优惠|立减|已省|满减|抵扣|减免|满\d+减|余额|可用余额|当前余额|剩余|额度)[：:\s]*[¥￥]?\s*$/;
 
 const GENERIC_PHRASES = new Set([
+  '微信',
   '微信支付',
+  '微信支付凭证',
   '支付宝',
+  '支付宝通知',
+  '交易提醒',
   '支付成功',
   '付款成功',
   '收款通知',
   '账单通知',
   '美团外卖',
   '美团',
+  '银行短信',
 ]);
 
 function parseAmountToCents(raw: string | undefined): number | null {
@@ -107,26 +208,48 @@ function parseAmountToCents(raw: string | undefined): number | null {
   return cents;
 }
 
+function isPrecededByNonPaymentPrefix(text: string, matchIndex: number): boolean {
+  const start = Math.max(0, matchIndex - 10);
+  const prefix = text.slice(start, matchIndex);
+  return NON_PAYMENT_PREFIX_REGEX.test(prefix);
+}
+
 function extractAmountCents(text: string): number | null {
-  const kwMatch = text.match(KEYWORD_AMOUNT_REGEX);
-  if (kwMatch?.[1]) {
-    const cents = parseAmountToCents(kwMatch[1]);
+  for (const m of text.matchAll(PRIORITY_AMOUNT_REGEX)) {
+    const cents = parseAmountToCents(m[1]);
     if (cents !== null) return cents;
   }
-  const curMatch = text.match(CURRENCY_AMOUNT_REGEX);
-  if (curMatch) {
-    const raw = curMatch[1] || curMatch[2];
+
+  for (const m of text.matchAll(GENERAL_KEYWORD_AMOUNT_REGEX)) {
+    if (m.index !== undefined && isPrecededByNonPaymentPrefix(text, m.index)) {
+      continue;
+    }
+    const cents = parseAmountToCents(m[1]);
+    if (cents !== null) return cents;
+  }
+
+  let fallbackCents: number | null = null;
+  for (const m of text.matchAll(CURRENCY_AMOUNT_REGEX)) {
+    const raw = m[1] || m[2];
     const cents = parseAmountToCents(raw);
-    if (cents !== null) return cents;
+    if (cents === null) continue;
+    if (m.index === undefined || !isPrecededByNonPaymentPrefix(text, m.index)) {
+      return cents;
+    }
+    if (fallbackCents === null) {
+      fallbackCents = cents;
+    }
   }
-  return null;
+
+  return fallbackCents;
 }
 
 function extractMerchant(sourceApp: string, title: string, combined: string): string {
   const patterns = [
     /(?:向|给)([\u4e00-\u9fa5A-Za-z0-9·()（）_-]{2,20}?)(?:付款|转账|支付|消费)/,
     /在([\u4e00-\u9fa5A-Za-z0-9·()（）_-]{2,20}?)(?:消费|付款|下单)/,
-    /(?:收款方|商户|商家|付款方|商品)[：:]\s*([\u4e00-\u9fa5A-Za-z0-9·()（）_-]{2,20})/,
+    /(?:收款方|商户|商家|付款方|商品|交易对方)[：:]\s*([\u4e00-\u9fa5A-Za-z0-9·()（）_-]{2,20})/,
+    /【([\u4e00-\u9fa5A-Za-z0-9]{2,12})】/,
   ];
   for (const re of patterns) {
     const m = combined.match(re);
@@ -178,19 +301,23 @@ export function suggestCategoryForPayment(
 
   if (
     sourceApp === '美团外卖' ||
+    sourceApp === '饿了么' ||
     containsAny(text, [
       '美团外卖',
       '饿了么',
       '瑞幸',
       '星巴克',
+      '霸王茶姬',
       '喜茶',
       '奈雪',
+      '蜜雪',
       '肯德基',
       '麦当劳',
       '餐厅',
       '餐饮',
       '饭',
       '面',
+      '粉',
       '火锅',
       '烧烤',
       '奶茶',
@@ -200,12 +327,16 @@ export function suggestCategoryForPayment(
       '晚餐',
       '小吃',
       '外卖',
+      '烘焙',
+      '面包',
+      '蛋糕',
     ])
   ) {
     return { categoryId: 'exp_food', categoryName: '餐饮' };
   }
 
   if (
+    sourceApp === '滴滴出行' ||
     containsAny(text, [
       '滴滴',
       '高德',
@@ -213,12 +344,14 @@ export function suggestCategoryForPayment(
       '出租车',
       '地铁',
       '公交',
+      '乘车码',
       '高铁',
       '铁路',
       '12306',
       '机票',
       '航司',
       '加油',
+      '充电',
       '停车',
       '高速',
       'ETC',
@@ -237,6 +370,7 @@ export function suggestCategoryForPayment(
       '京东',
       '拼多多',
       '唯品会',
+      '得物',
       '服饰',
       '鞋',
       '数码',
@@ -255,9 +389,11 @@ export function suggestCategoryForPayment(
       '盒马',
       '沃尔玛',
       '永辉',
+      '山姆',
       '罗森',
       '711',
       '全家',
+      '屈臣氏',
       '日用',
       '生活用品',
       '快递',
@@ -322,12 +458,13 @@ export function suggestCategoryForPayment(
   return { categoryId: 'exp_other', categoryName: '其他支出' };
 }
 
-export function parsePaymentNotificationText(options: {
+export function parsePaymentWithReason(options: {
   sourceApp: string;
   title?: string;
   content: string;
   requireCompletionHeader?: boolean;
-}): ParsedPaymentResult | null {
+  isSms?: boolean;
+}): PaymentParseOutcome {
   const title = options.title?.trim() ?? '';
   const content = options.content.trim();
   const combined = [title, content]
@@ -336,22 +473,45 @@ export function parsePaymentNotificationText(options: {
     .replace(/\s+/g, ' ')
     .trim();
 
-  if (combined.length < 4) return null;
-  if (NOISE_KEYWORDS.some((kw) => combined.includes(kw))) return null;
+  if (combined.length < 4) {
+    return { parsed: null, rejectReason: '内容过短' };
+  }
+
+  const hardNoise = HARD_NOISE_KEYWORDS.find((kw) => combined.includes(kw));
+  if (hardNoise) {
+    return { parsed: null, rejectReason: `过滤干扰词：${hardNoise}` };
+  }
+
+  if (options.isSms && !SMS_BANK_HINTS.some((kw) => combined.includes(kw))) {
+    return { parsed: null, rejectReason: '非银行/支付短信' };
+  }
+
+  const hasStrongCompletion = STRONG_COMPLETION_SIGNALS.some((kw) =>
+    combined.includes(kw)
+  );
+  const softPromo = SOFT_PROMO_KEYWORDS.find((kw) => combined.includes(kw));
+  if (softPromo && !hasStrongCompletion) {
+    return { parsed: null, rejectReason: `过滤营销/配送文案：${softPromo}` };
+  }
+
   if (
     options.requireCompletionHeader &&
     !COMPLETION_HEADERS.some((kw) => combined.includes(kw))
   ) {
-    return null;
+    return { parsed: null, rejectReason: '未出现支付完成页标志' };
   }
 
   const isIncome = INCOME_KEYWORDS.some((kw) => combined.includes(kw));
   const isExpense = EXPENSE_PATTERNS.some((re) => re.test(combined));
-  if (!isIncome && !isExpense) return null;
+  if (!isIncome && !isExpense) {
+    return { parsed: null, rejectReason: '未检测到收支关键词' };
+  }
 
   const type: TransactionType = isIncome ? 'income' : 'expense';
   const amountCents = extractAmountCents(combined);
-  if (amountCents === null) return null;
+  if (amountCents === null) {
+    return { parsed: null, rejectReason: '未匹配到有效金额' };
+  }
 
   const merchant = extractMerchant(options.sourceApp, title, combined);
   const { categoryId, categoryName } = suggestCategoryForPayment(
@@ -364,12 +524,25 @@ export function parsePaymentNotificationText(options: {
     combined.length > 100 ? `${combined.slice(0, 100)}…` : combined;
 
   return {
-    type,
-    amountCents,
-    merchant,
-    suggestedCategoryId: categoryId,
-    suggestedCategoryName: categoryName,
-    sourceApp: options.sourceApp,
-    rawSummary,
+    parsed: {
+      type,
+      amountCents,
+      merchant,
+      suggestedCategoryId: categoryId,
+      suggestedCategoryName: categoryName,
+      sourceApp: options.sourceApp,
+      rawSummary,
+    },
+    rejectReason: null,
   };
+}
+
+export function parsePaymentNotificationText(options: {
+  sourceApp: string;
+  title?: string;
+  content: string;
+  requireCompletionHeader?: boolean;
+  isSms?: boolean;
+}): ParsedPaymentResult | null {
+  return parsePaymentWithReason(options).parsed;
 }

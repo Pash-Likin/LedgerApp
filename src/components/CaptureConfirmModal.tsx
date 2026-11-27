@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -9,11 +10,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, RADIUS, SHADOW, SPACING, TABULAR_NUMS } from '../constants/theme';
 import { useLedger } from '../context/LedgerContext';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import type { CapturedRecord } from '../services/autoLedger';
 import { showAlert } from '../services/dialog';
 import { triggerSelectionHaptic, triggerSuccessHaptic } from '../services/haptics';
@@ -39,6 +42,8 @@ export function CaptureConfirmModal({
   onClose,
 }: CaptureConfirmModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const { keyboardHeight, isKeyboardVisible } = useKeyboardHeight(visible);
   const { categories, confirmPendingCapture, ignorePendingCapture } = useLedger();
 
   const [type, setType] = useState<TransactionType>('expense');
@@ -129,6 +134,10 @@ export function CaptureConfirmModal({
   if (!capture) return null;
 
   const accent = type === 'expense' ? COLORS.expense : COLORS.income;
+  const sheetMaxHeight = Math.max(
+    280,
+    windowHeight - keyboardHeight - insets.top - 16
+  );
 
   return (
     <Modal
@@ -137,12 +146,26 @@ export function CaptureConfirmModal({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <View style={styles.backdrop}>
-        <Pressable style={styles.dismissArea} onPress={onClose} />
+      <View style={[styles.backdrop, { paddingBottom: keyboardHeight }]}>
+        <Pressable
+          style={styles.dismissArea}
+          onPress={() => {
+            if (isKeyboardVisible) {
+              Keyboard.dismiss();
+            } else {
+              onClose();
+            }
+          }}
+        />
         <View
           style={[
             styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, SPACING.lg) },
+            {
+              maxHeight: sheetMaxHeight,
+              paddingBottom: isKeyboardVisible
+                ? SPACING.sm
+                : Math.max(insets.bottom, SPACING.lg),
+            },
           ]}
         >
           <View style={styles.header}>
@@ -161,123 +184,128 @@ export function CaptureConfirmModal({
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.modalTitle}>确认是否记账与分类</Text>
-          {capture.rawSummary ? (
-            <Text style={styles.rawSummary} numberOfLines={2}>
-              识别原文：{capture.rawSummary}
-            </Text>
-          ) : null}
-
-          <View style={styles.typeSegmented}>
-            <TouchableOpacity
-              onPress={() => handleSwitchType('expense')}
-              style={[
-                styles.segBtn,
-                type === 'expense' && styles.segBtnExpense,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.segText,
-                  type === 'expense' && styles.segTextActive,
-                ]}
-              >
-                支出
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => handleSwitchType('income')}
-              style={[styles.segBtn, type === 'income' && styles.segBtnIncome]}
-            >
-              <Text
-                style={[
-                  styles.segText,
-                  type === 'income' && styles.segTextActive,
-                ]}
-              >
-                收入
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.amountBox}>
-            <Text style={[styles.currency, { color: accent }]}>¥</Text>
-            <TextInput
-              style={[styles.amountInput, { color: accent }]}
-              value={amountText}
-              onChangeText={setAmountText}
-              keyboardType="decimal-pad"
-              selectTextOnFocus
-            />
-          </View>
-
-          <Text style={styles.sectionLabel}>选择账单类型</Text>
           <ScrollView
-            style={styles.catScroll}
-            contentContainerStyle={styles.catGrid}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
           >
-            {filteredCategories.map((cat) => {
-              const selected = cat.id === categoryId;
-              const isSuggested = cat.id === capture.suggestedCategoryId;
-              return (
-                <TouchableOpacity
-                  key={cat.id}
-                  onPress={() => {
-                    triggerSelectionHaptic();
-                    setCategoryId(cat.id);
-                  }}
-                  style={styles.catTile}
-                  activeOpacity={0.75}
-                >
-                  <View
-                    style={[
-                      styles.catBadge,
-                      selected
-                        ? { backgroundColor: cat.color }
-                        : { backgroundColor: `${cat.color}1A` },
-                    ]}
-                  >
-                    <Ionicons
-                      name={cat.icon as keyof typeof Ionicons.glyphMap}
-                      size={20}
-                      color={selected ? COLORS.white : cat.color}
-                    />
-                    {isSuggested ? (
-                      <View style={styles.recommendPill}>
-                        <Text style={styles.recommendText}>推荐</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text
-                    style={[
-                      styles.catName,
-                      selected && { color: cat.color, fontWeight: '700' },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {cat.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+            <Text style={styles.modalTitle}>确认是否记账与分类</Text>
+            {capture.rawSummary ? (
+              <Text style={styles.rawSummary} numberOfLines={2}>
+                识别原文：{capture.rawSummary}
+              </Text>
+            ) : null}
 
-          <View style={styles.noteWrap}>
-            <Ionicons
-              name="create-outline"
-              size={16}
-              color={COLORS.textMuted}
-            />
-            <TextInput
-              style={styles.noteInput}
-              value={note}
-              onChangeText={setNote}
-              placeholder="备注说明"
-              placeholderTextColor={COLORS.textMuted}
-              maxLength={60}
-            />
-          </View>
+            <View style={styles.typeSegmented}>
+              <TouchableOpacity
+                onPress={() => handleSwitchType('expense')}
+                style={[
+                  styles.segBtn,
+                  type === 'expense' && styles.segBtnExpense,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.segText,
+                    type === 'expense' && styles.segTextActive,
+                  ]}
+                >
+                  支出
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => handleSwitchType('income')}
+                style={[styles.segBtn, type === 'income' && styles.segBtnIncome]}
+              >
+                <Text
+                  style={[
+                    styles.segText,
+                    type === 'income' && styles.segTextActive,
+                  ]}
+                >
+                  收入
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.amountBox}>
+              <Text style={[styles.currency, { color: accent }]}>¥</Text>
+              <TextInput
+                style={[styles.amountInput, { color: accent }]}
+                value={amountText}
+                onChangeText={setAmountText}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+            </View>
+
+            <Text style={styles.sectionLabel}>选择账单类型</Text>
+            <View style={styles.catGrid}>
+              {filteredCategories.map((cat) => {
+                const selected = cat.id === categoryId;
+                const isSuggested = cat.id === capture.suggestedCategoryId;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    onPress={() => {
+                      triggerSelectionHaptic();
+                      setCategoryId(cat.id);
+                    }}
+                    style={styles.catTile}
+                    activeOpacity={0.75}
+                  >
+                    <View
+                      style={[
+                        styles.catBadge,
+                        selected
+                          ? { backgroundColor: cat.color }
+                          : { backgroundColor: `${cat.color}1A` },
+                      ]}
+                    >
+                      <Ionicons
+                        name={cat.icon as keyof typeof Ionicons.glyphMap}
+                        size={20}
+                        color={selected ? COLORS.white : cat.color}
+                      />
+                      {isSuggested ? (
+                        <View style={styles.recommendPill}>
+                          <Text style={styles.recommendText}>推荐</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text
+                      style={[
+                        styles.catName,
+                        selected && { color: cat.color, fontWeight: '700' },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {cat.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.noteWrap}>
+              <Ionicons
+                name="create-outline"
+                size={16}
+                color={COLORS.textMuted}
+              />
+              <TextInput
+                style={styles.noteInput}
+                value={note}
+                onChangeText={setNote}
+                placeholder="备注说明"
+                placeholderTextColor={COLORS.textMuted}
+                maxLength={60}
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+              />
+            </View>
+          </ScrollView>
 
           <View style={styles.footer}>
             <TouchableOpacity

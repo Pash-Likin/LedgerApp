@@ -108,14 +108,10 @@ export function LedgerScreen({
           <TouchableOpacity
             onPress={onOpenAutoCenter}
             style={styles.autoCenterIconBtn}
-            accessibilityLabel="自动记账与桌面小组件"
+            accessibilityLabel="小组件与扩展功能"
             hitSlop={6}
           >
-            <Ionicons
-              name="notifications-outline"
-              size={19}
-              color={COLORS.primary}
-            />
+            <Ionicons name="apps-outline" size={19} color={COLORS.primary} />
             {pendingCaptures.length > 0 ? (
               <View style={styles.pendingDot} />
             ) : null}

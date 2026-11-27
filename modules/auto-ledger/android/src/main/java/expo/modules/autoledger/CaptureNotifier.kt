@@ -10,7 +10,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 
 object CaptureNotifier {
-  private const val CHANNEL_CAPTURE = "auto_ledger_capture_v1"
+  private const val CHANNEL_CAPTURE_VIBRATE = "auto_ledger_capture_v1"
+  private const val CHANNEL_CAPTURE_QUIET = "auto_ledger_capture_quiet_v1"
   private const val CHANNEL_FEEDBACK = "auto_ledger_feedback_v1"
 
   fun ensureChannels(context: Context) {
@@ -18,13 +19,23 @@ object CaptureNotifier {
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
       ?: return
 
-    val captureChannel = NotificationChannel(
-      CHANNEL_CAPTURE,
-      "自动记账提醒",
+    val vibrateChannel = NotificationChannel(
+      CHANNEL_CAPTURE_VIBRATE,
+      "自动记账提醒（含震动）",
       NotificationManager.IMPORTANCE_HIGH
     ).apply {
       description = "识别到微信、支付宝、美团等收支通知时，弹窗询问是否记账及类型"
       enableVibration(true)
+    }
+
+    val quietChannel = NotificationChannel(
+      CHANNEL_CAPTURE_QUIET,
+      "自动记账提醒（静音无震动）",
+      NotificationManager.IMPORTANCE_HIGH
+    ).apply {
+      description = "识别到收支时弹出横幅提醒，但不触发手机震动"
+      enableVibration(false)
+      vibrationPattern = null
     }
 
     val feedbackChannel = NotificationChannel(
@@ -34,9 +45,11 @@ object CaptureNotifier {
     ).apply {
       description = "在通知栏一键确认记账后的简短回执"
       setSound(null, null)
+      enableVibration(false)
     }
 
-    manager.createNotificationChannel(captureChannel)
+    manager.createNotificationChannel(vibrateChannel)
+    manager.createNotificationChannel(quietChannel)
     manager.createNotificationChannel(feedbackChannel)
   }
 
@@ -45,6 +58,9 @@ object CaptureNotifier {
     if (!AutoLedgerStore.canPostNotifications(context)) {
       return
     }
+
+    val vibrateEnabled = AutoLedgerStore.isHapticsEnabled(context)
+    val channelId = if (vibrateEnabled) CHANNEL_CAPTURE_VIBRATE else CHANNEL_CAPTURE_QUIET
 
     val typeLabel = if (record.type == "income") "收入" else "支出"
     val yuan = AutoLedgerStore.formatCentsYuan(record.amountCents)
@@ -85,7 +101,7 @@ object CaptureNotifier {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
-    val notification = NotificationCompat.Builder(context, CHANNEL_CAPTURE)
+    val builder = NotificationCompat.Builder(context, channelId)
       .setSmallIcon(R.drawable.ic_ledger_notify)
       .setContentTitle(title)
       .setContentText(body)
@@ -97,10 +113,13 @@ object CaptureNotifier {
       .addAction(0, "记为「${record.suggestedCategoryName}」", confirmPendingIntent)
       .addAction(0, "选分类", reviewPendingIntent)
       .addAction(0, "忽略", ignorePendingIntent)
-      .build()
+
+    if (!vibrateEnabled) {
+      builder.setVibrate(longArrayOf(0L))
+    }
 
     try {
-      NotificationManagerCompat.from(context).notify(record.notificationId, notification)
+      NotificationManagerCompat.from(context).notify(record.notificationId, builder.build())
     } catch (_: SecurityException) {
       // Permission revoked concurrently
     }

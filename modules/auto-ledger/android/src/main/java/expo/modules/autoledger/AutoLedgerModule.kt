@@ -123,18 +123,40 @@ class AutoLedgerModule : Module() {
 
     Function("getSettings") {
       val ctx = contextOrNull ?: return@Function mapOf(
-        "notificationEnabled" to true,
-        "accessibilityEnabled" to true
+        "notificationEnabled" to false,
+        "accessibilityEnabled" to false,
+        "hapticsEnabled" to true
       )
       mapOf(
         "notificationEnabled" to AutoLedgerStore.isNotificationListenerFeatureEnabled(ctx),
-        "accessibilityEnabled" to AutoLedgerStore.isAccessibilityFeatureEnabled(ctx)
+        "accessibilityEnabled" to AutoLedgerStore.isAccessibilityFeatureEnabled(ctx),
+        "hapticsEnabled" to AutoLedgerStore.isHapticsEnabled(ctx)
       )
     }
 
     Function("updateSettings") { notificationEnabled: Boolean, accessibilityEnabled: Boolean ->
       val ctx = contextOrNull ?: return@Function Unit
       AutoLedgerStore.setFeatureSettings(ctx, notificationEnabled, accessibilityEnabled)
+    }
+
+    Function("getHapticsEnabled") {
+      val ctx = contextOrNull ?: return@Function true
+      AutoLedgerStore.isHapticsEnabled(ctx)
+    }
+
+    Function("setHapticsEnabled") { enabled: Boolean ->
+      val ctx = contextOrNull ?: return@Function Unit
+      AutoLedgerStore.setHapticsEnabled(ctx, enabled)
+    }
+
+    Function("getCaptureLogs") {
+      val ctx = contextOrNull ?: return@Function "[]"
+      AutoLedgerStore.getLogsJson(ctx)
+    }
+
+    Function("clearCaptureLogs") {
+      val ctx = contextOrNull ?: return@Function Unit
+      AutoLedgerStore.clearLogs(ctx)
     }
 
     Function("getCaptures") {
@@ -195,13 +217,23 @@ class AutoLedgerModule : Module() {
 
     Function("simulateCaptureNotification") { sourceApp: String, sampleText: String ->
       val ctx = contextOrNull ?: return@Function false
-      val parsed = PaymentTextParser.parse(
+      val outcome = PaymentTextParser.parseWithReason(
         sourceApp = sourceApp,
         title = sourceApp,
         content = sampleText,
         requireCompletionHeader = false
-      ) ?: return@Function false
+      )
+      val parsed = outcome.parsed ?: return@Function false
       val record = AutoLedgerStore.addCapture(ctx, parsed, "demo")
+      val yuan = AutoLedgerStore.formatCentsYuan(parsed.amountCents)
+      AutoLedgerStore.appendLog(
+        context = ctx,
+        sourceApp = sourceApp,
+        channel = "demo",
+        rawSnippet = sampleText,
+        outcome = "模拟识别 ¥$yuan → ${parsed.suggestedCategoryName}",
+        matched = true
+      )
       CaptureNotifier.showCaptureNotification(ctx, record)
       LedgerSummaryWidgetProvider.refreshAllWidgets(ctx)
       AutoLedgerBridge.notifyCapturesUpdated()
